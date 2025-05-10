@@ -1,0 +1,38 @@
+version: '3.9'
+
+services:
+  web:
+    build: .
+    container_name: webhook_service
+    command: flask run --host=0.0.0.0 --port=8000
+    depends_on:
+      - db
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - FLASK_ENV=development
+      - DB_URL=postgresql://webhook_user:supersecret@db:5432/webhooks_db
+
+  db:
+    image: postgres:15
+    container_name: webhook_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: webhook_user
+      POSTGRES_PASSWORD: supersecret
+      POSTGRES_DB: webhooks_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    container_name: webhook_redis
+    ports:
+      - "6379:6379"
+
+volumes:
+  pgdata:
