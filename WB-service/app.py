@@ -9,10 +9,16 @@ import hmac,hashlib
 from queue_worker import event_queue,queue_worker,scheduler
 from cleanup_service import cleanup_expired_subscriptions
 import json
+import redis
+import pickle
+
+# Connect to Redis
+redis_client = redis.StrictRedis(host='localhost', port=6379, db=0)
+
 
 #DB intiation & Migration
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = "postgresql://webhook_user:supersecret@localhost:5434/webhooks_db"
+app.config['SQLALCHEMY_DATABASE_URI'] = "postgresql://webhook_user:supersecret@localhost:5432/webhooks_db"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 
@@ -21,6 +27,21 @@ with app.app_context():
     
 migrate = Migrate(app, db)
 
+# caching helper functions 
+def cache_subscription(sub):
+    key = f"subscription:{sub.id}"
+    redis_client.set(key, pickle.dumps(sub))
+
+def get_cached_subscription(subscription_id):
+    key = f"subscription:{subscription_id}"
+    cached = redis_client.get(key)
+    if cached:
+        return pickle.loads(cached)
+    return None
+
+def remove_cached_subscription(subscription_id):
+    key = f"subscription:{subscription_id}"
+    redis_client.delete(key)
 
 
 def signature_validity(payload , recieved_signature ,sub_id_key):
@@ -45,10 +66,15 @@ if __name__ == "__main__":
     def intiate_webhook(subscription_id):
         payload = request.get_json()
         event_type = payload.get("event")
-        sub = Subscription.query.filter_by(id=subscription_id).first()
         sig = request.headers.get('x-signature')
+        sub = get_cached_subscription(subscription_id)
+
         if not sub :
-            return jsonify({'message':'Subscription not found'}) , 404
+            sub = Subscription.query.filter_by(id=subscription_id).first()
+            if not sub :
+                return jsonify({'message':'Subscription not found'}) , 404
+            cache_subscription(sub)
+
         if not signature_validity(payload,sig,sub.secret_key):
             jsonify({"message":"Not valid"})
         
@@ -120,3 +146,32 @@ if __name__ == "__main__":
         ])
     
     app.run(host='0.0.0.0', port=8000, debug=True)
+    # Update a subscription
+@app.route('/update_subscription/<subscription_id>', methods=['PUT'])
+def update_subscription(subscription_id):
+    sub = Subscription.query.filter_by(id=subscription_id).first()
+    if not sub:
+        return jsonify({"message": "Subscription not found"}), 404
+
+    data = request.json
+    sub.target_url = data.get('target_url', sub.target_url)
+    sub.event_type = data.get('event_type', sub.event_type)
+    sub.secret_key = data.get('secret_key', sub.secret_key)
+    sub.is_active = data.get('is_active', sub.is_active)
+
+    db.session.commit()
+    cache_subscription(sub)
+    return jsonify({"message": "Subscription updated successfully"}), 200
+
+
+# Delete a subscription
+@app.route('/delete_subscription/<subscription_id>', methods=['DELETE'])
+def delete_subscription(subscription_id):
+    sub = Subscription.query.filter_by(id=subscription_id).first()
+    if not sub:
+        return jsonify({"message": "Subscription not found"}), 404
+
+    db.session.delete(sub)
+    db.session.commit()
+    remove_cached_subscription(subscription_id) 
+    return jsonify({"message": "Subscription deleted successfully"}), 200
