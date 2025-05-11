@@ -18,7 +18,7 @@ redis_client = redis.StrictRedis(host='localhost', port=6379, db=0)
 
 #DB intiation & Migration
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = "postgresql://webhook_user:supersecret@localhost:5432/webhooks_db"
+app.config['SQLALCHEMY_DATABASE_URI'] = "postgresql://webhook_user:supersecret@db:5432/webhooks_db"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 
